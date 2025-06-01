@@ -1,0 +1,13 @@
+{
+  "name": "bot-alerta-vuelos",
+  "version": "1.0.0",
+  "description": "Bot que busca vuelos baratos entre EZE y BCN y avisa por Telegram",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0"
+  }
+}

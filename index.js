@@ -6,7 +6,7 @@ const { sendTelegram } = require("./telegram");
 const ORIGIN = "EZE";
 const DESTINATION = "BCN";
 const MONTHS = ["2025-12", "2026-01", "2026-02", "2026-03"];
-const PASSENGER_COUNTS = [2];//, 4, 7];
+const PASSENGER_COUNTS = [1,2];//, 4, 7];
 const PRICE_THRESHOLD = 600;
 
 // Genera combinaciones ida-vuelta a 7, 14 y 21 días

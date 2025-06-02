@@ -13,7 +13,13 @@ const MAX_STAY_DAYS = 60;
 async function getCalendarPrices(month, year) {
   const url = `https://www.flylevel.com/nwe/flights/api/calendar/?triptype=RT&origin=${ORIGIN}&destination=${DESTINATION}&month=${month}&year=${year}&currencyCode=USD`;
   try {
-    const { data } = await axios.get(url);
+    const { data } = await axios.get(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json",
+        "Referer": "https://www.flylevel.com/"
+      }
+    });
     return data.data.dayPrices || [];
   } catch (err) {
     console.error(`Error al obtener precios del calendario ${month}/${year}:`, err.message);

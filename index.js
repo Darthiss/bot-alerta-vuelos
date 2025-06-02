@@ -4,9 +4,9 @@ const { sendTelegram } = require("./telegram");
 
 const ORIGIN = "EZE";
 const DESTINATION = "BCN";
-const MONTHS = ["2026-01", "2026-02", "2026-03"];
-const PASSENGER_COUNTS = [1, 2];
-const PRICE_THRESHOLD = 1000;
+const MONTHS = ["2026-01", "2026-02", "2026-03","2026-4"];
+const PASSENGER_COUNTS = [1,2];
+const PRICE_THRESHOLD = 500;
 const MIN_STAY_DAYS = 14;
 const MAX_STAY_DAYS = 60;
 
@@ -63,7 +63,7 @@ async function checkFlight(ida, vuelta, adults) {
   try {
     const res = await axios.get(url, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json",
         "Referer": "https://www.flylevel.com/"
       }

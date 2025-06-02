@@ -1,36 +1,59 @@
-// Archivo: index.js
 require("dotenv").config();
 const axios = require("axios");
 const { sendTelegram } = require("./telegram");
 
 const ORIGIN = "EZE";
 const DESTINATION = "BCN";
-const MONTHS = ["2025-12", "2026-01", "2026-02", "2026-03"];
-const PASSENGER_COUNTS = [1,2];//, 4, 7];
-const PRICE_THRESHOLD = 600;
+const MONTHS = ["2026-01", "2026-02", "2026-03"];
+const PASSENGER_COUNTS = [1, 2];
+const PRICE_THRESHOLD = 1000;
+const MIN_STAY_DAYS = 14;
+const MAX_STAY_DAYS = 60;
 
-// Genera combinaciones ida-vuelta a 7, 14 y 21 días
-function generateDatePairs(month) {
-  const pairs = [];
-  const [year, m] = month.split("-").map(Number);
-  const daysInMonth = new Date(year, m, 0).getDate();
-
-  for (let day = 1; day <= daysInMonth - 21; day++) {
-    const ida = new Date(year, m - 1, day);
-    [14, 21].forEach(offset => {
-      const vuelta = new Date(ida);
-      vuelta.setDate(ida.getDate() + offset);
-
-      const idaStr = ida.toISOString().split("T")[0];
-      const vueltaStr = vuelta.toISOString().split("T")[0];
-      pairs.push([idaStr, vueltaStr]);
-    });
+async function getCalendarPrices(month, year) {
+  const url = `https://www.flylevel.com/nwe/flights/api/calendar/?triptype=RT&origin=${ORIGIN}&destination=${DESTINATION}&month=${month}&year=${year}&currencyCode=USD`;
+  try {
+    const { data } = await axios.get(url);
+    return data.data.dayPrices || [];
+  } catch (err) {
+    console.error(`Error al obtener precios del calendario ${month}/${year}:`, err.message);
+    return [];
   }
-  return pairs;
+}
+
+function combinePromisingDates(dayPrices) {
+  const combos = [];
+  const dates = dayPrices.map(p => ({
+    date: p.date,
+    price: p.price
+  }));
+
+  for (let i = 0; i < dates.length; i++) {
+    const ida = dates[i];
+    for (
+      let j = i + MIN_STAY_DAYS;
+      j < dates.length && j <= i + MAX_STAY_DAYS;
+      j++
+    ) {
+      const vuelta = dates[j];
+      const total = ida.price + vuelta.price;
+
+      if (total <= PRICE_THRESHOLD) {
+        combos.push({
+          ida: ida.date,
+          vuelta: vuelta.date,
+          estimate: total
+        });
+      }
+    }
+  }
+
+  return combos;
 }
 
 async function checkFlight(ida, vuelta, adults) {
   const url = `https://www.flylevel.com/nwe/api/flights/?o1=${ORIGIN}&d1=${DESTINATION}&dd1=${ida}&dd2=${vuelta}&ADT=${adults}&CHD=0&INL=0&r=true&mm=true&forcedCurrency=USD&forcedCulture=es-ES&newecom=true`;
+
   try {
     const res = await axios.get(url, {
       headers: {
@@ -54,7 +77,10 @@ async function checkFlight(ida, vuelta, adults) {
                 const pricePerPassenger = total / adults;
 
                 if (pricePerPassenger <= PRICE_THRESHOLD) {
-                  if (!cheapestRoundTrip || pricePerPassenger < cheapestRoundTrip.pricePerPassenger) {
+                  if (
+                    !cheapestRoundTrip ||
+                    pricePerPassenger < cheapestRoundTrip.pricePerPassenger
+                  ) {
                     cheapestRoundTrip = {
                       ida,
                       vuelta,
@@ -91,9 +117,12 @@ Precio final por adulto: *USD ${cheapestRoundTrip.pricePerPassenger.toFixed(2)}*
 }
 
 async function main() {
-  for (const month of MONTHS) {
-    const pairs = generateDatePairs(month);
-    for (const [ida, vuelta] of pairs) {
+  for (const m of MONTHS) {
+    const [year, month] = m.split("-");
+    const calendarPrices = await getCalendarPrices(month, year);
+    const combos = combinePromisingDates(calendarPrices);
+
+    for (const { ida, vuelta } of combos) {
       for (const adults of PASSENGER_COUNTS) {
         await checkFlight(ida, vuelta, adults);
       }

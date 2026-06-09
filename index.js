@@ -19,6 +19,7 @@ const CURRENCY = "EUR";
 const LOOP_INTERVAL_MS = 2 * 60 * 1000;
 const CONCURRENCY = 3;          // parallel API calls per batch
 const DEAL_RENOTIFY_MS = 4 * 60 * 60 * 1000;
+const MAX_RUNTIME_MS = 28 * 60 * 1000; // exit after 28 min so GitHub Actions job completes cleanly
 
 const HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -175,4 +176,5 @@ async function main() {
 }
 
 main();
-setInterval(main, LOOP_INTERVAL_MS);
+const loop = setInterval(main, LOOP_INTERVAL_MS);
+setTimeout(() => { clearInterval(loop); console.log("[fin] Tiempo límite alcanzado, cerrando."); process.exit(0); }, MAX_RUNTIME_MS);

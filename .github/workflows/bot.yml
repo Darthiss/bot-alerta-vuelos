@@ -2,12 +2,13 @@ name: Ejecutar bot vuelos
 
 on:
   schedule:
-    - cron: '*/20 * * * *'  # Cada 15 minutos UTC
+    - cron: '*/30 * * * *'  # Cada 30 minutos. Cada job corre 28 min y sale limpio.
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Clonar repositorio

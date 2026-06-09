@@ -2,7 +2,7 @@ name: Ejecutar bot vuelos
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # Cada 30 minutos. Cada job corre 28 min y sale limpio.
+    - cron: '*/15 * * * *'  # Cada 15 minutos. Jobs se solapan (28 min de duración) = cobertura continua.
   workflow_dispatch:
 
 jobs:

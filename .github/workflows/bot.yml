@@ -2,7 +2,7 @@ name: Ejecutar bot vuelos
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # Cada 15 minutos UTC
+    - cron: '*/20 * * * *'  # Cada 15 minutos UTC
   workflow_dispatch:
 
 jobs:

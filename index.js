@@ -8,7 +8,7 @@ const MONTHS = [
   "2026-07", "2026-08", "2026-09", "2026-10",
   "2026-11", "2026-12", "2027-01", "2027-02"
 ];
-const PRICE_THRESHOLD = 1000;    // EUR per person, round trip total
+const PRICE_THRESHOLD = 650;    // EUR per person, round trip total
 const MIN_STAY_DAYS = 10;
 const SCAN_STEP_DAYS = 1;       // check every departure day — no gaps for the promo to hide in
 const SCAN_RETURN_OFFSET = 14;  // days; satisfies ≥10 day minimum

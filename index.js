@@ -4,136 +4,175 @@ const { sendTelegram } = require("./telegram");
 
 const ORIGIN = "EZE";
 const DESTINATION = "BCN";
-const MONTHS = ["2026-01", "2026-02", "2026-03","2026-4"];
-const PASSENGER_COUNTS = [1,2];
-const PRICE_THRESHOLD = 500;
-const MIN_STAY_DAYS = 14;
-const MAX_STAY_DAYS = 60;
+const MONTHS = [
+  "2026-07", "2026-08", "2026-09", "2026-10",
+  "2026-11", "2026-12", "2027-01", "2027-02"
+];
+const PRICE_THRESHOLD = 600;    // EUR per person, round trip total
+const MIN_STAY_DAYS = 10;
+const SCAN_STEP_DAYS = 1;       // check every departure day — no gaps for the promo to hide in
+const SCAN_RETURN_OFFSET = 14;  // days; satisfies ≥10 day minimum
+// On expansion (deal confirmed), check these return offsets for both adult counts
+const EXPAND_RETURN_OFFSETS = [10, 14, 17, 21, 28, 35];
+const PASSENGER_COUNTS = [1, 2];
+const CURRENCY = "EUR";
+const LOOP_INTERVAL_MS = 2 * 60 * 1000;
+const CONCURRENCY = 3;          // parallel API calls per batch
+const DEAL_RENOTIFY_MS = 4 * 60 * 60 * 1000;
 
-async function getCalendarPrices(month, year) {
-  const url = `https://www.flylevel.com/nwe/flights/api/calendar/?triptype=RT&origin=${ORIGIN}&destination=${DESTINATION}&month=${month}&year=${year}&currencyCode=USD`;
-  try {
-    const { data } = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept": "application/json",
-        "Referer": "https://www.flylevel.com/"
-      }
-    });
-    return data.data.dayPrices || [];
-  } catch (err) {
-    console.error(`Error al obtener precios del calendario ${month}/${year}:`, err.message);
-    return [];
-  }
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+  "Referer": "https://www.flylevel.com/",
+  "Origin": "https://www.flylevel.com"
+};
+
+const alertedDeals = new Map();
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
 }
 
-function combinePromisingDates(dayPrices) {
-  const combos = [];
-  const dates = dayPrices.map(p => ({
-    date: p.date,
-    price: p.price
-  }));
-
-  for (let i = 0; i < dates.length; i++) {
-    const ida = dates[i];
-    for (
-      let j = i + MIN_STAY_DAYS;
-      j < dates.length && j <= i + MAX_STAY_DAYS;
-      j++
-    ) {
-      const vuelta = dates[j];
-      const total = ida.price + vuelta.price;
-
-      if (total <= PRICE_THRESHOLD) {
-        combos.push({
-          ida: ida.date,
-          vuelta: vuelta.date,
-          estimate: total
-        });
-      }
-    }
-  }
-
-  return combos;
+function bestFarePrice(fare) {
+  const promo = fare.totalPriceWithPromo;
+  return (promo !== null && promo < fare.totalPrice) ? promo : fare.totalPrice;
 }
 
-async function checkFlight(ida, vuelta, adults) {
-  const url = `https://www.flylevel.com/nwe/api/flights/?o1=${ORIGIN}&d1=${DESTINATION}&dd1=${ida}&dd2=${vuelta}&ADT=${adults}&CHD=0&INL=0&r=true&mm=true&forcedCurrency=USD&forcedCulture=es-ES&newecom=true`;
+function departureDatesForMonth(yearMonth) {
+  const [year, m] = yearMonth.split("-").map(Number);
+  const daysInMonth = new Date(year, m, 0).getDate();
+  const dates = [];
+  for (let day = 1; day <= daysInMonth - MIN_STAY_DAYS; day += SCAN_STEP_DAYS) {
+    dates.push(new Date(year, m - 1, day).toISOString().split("T")[0]);
+  }
+  return dates;
+}
 
+async function checkPair(outDate, retDate, adults) {
+  const url = `https://www.flylevel.com/nwe/api/flights/?o1=${ORIGIN}&d1=${DESTINATION}&dd1=${outDate}&dd2=${retDate}&ADT=${adults}&CHD=0&INL=0&r=true&mm=false&forcedCurrency=${CURRENCY}&forcedCulture=es-ES&newecom=true`;
   try {
-    const res = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept": "application/json",
-        "Referer": "https://www.flylevel.com/"
-      }
-    });
+    const res = await axios.get(url, { headers: HEADERS, timeout: 12000 });
+    const outbound = res.data?.flightsInfo?.outboundJourneys || [];
+    const inbound = res.data?.flightsInfo?.inboundJourneys || [];
+    if (!outbound.length || !inbound.length) return null;
 
-    const outbound = res.data.flightsInfo.outboundJourneys || [];
-    const inbound = res.data.flightsInfo.inboundJourneys || [];
-    let cheapestRoundTrip = null;
-
-    outbound.forEach(o => {
-      Object.values(o.fares).forEach(outboundGroup => {
-        outboundGroup.forEach(outboundFare => {
-          inbound.forEach(i => {
-            Object.values(i.fares).forEach(inboundGroup => {
-              inboundGroup.forEach(inboundFare => {
-                const total = outboundFare.totalPrice + inboundFare.totalPrice;
-                const pricePerPassenger = total / adults;
-
-                if (pricePerPassenger <= PRICE_THRESHOLD) {
-                  if (
-                    !cheapestRoundTrip ||
-                    pricePerPassenger < cheapestRoundTrip.pricePerPassenger
-                  ) {
-                    cheapestRoundTrip = {
-                      ida,
-                      vuelta,
-                      groupOut: outboundFare.group,
-                      groupIn: inboundFare.group,
-                      total,
-                      count: adults,
-                      pricePerPassenger
+    let best = null;
+    for (const o of outbound) {
+      for (const outGroup of Object.values(o.fares)) {
+        for (const outFare of outGroup) {
+          for (const i of inbound) {
+            for (const inGroup of Object.values(i.fares)) {
+              for (const inFare of inGroup) {
+                const total = bestFarePrice(outFare) + bestFarePrice(inFare);
+                const pricePerPax = total / adults;
+                if (pricePerPax <= PRICE_THRESHOLD) {
+                  if (!best || pricePerPax < best.pricePerPax) {
+                    best = {
+                      outDate, retDate,
+                      stayDays: Math.round((new Date(retDate) - new Date(outDate)) / 86400000),
+                      groupOut: outFare.group,
+                      groupIn: inFare.group,
+                      total, adults, pricePerPax
                     };
                   }
                 }
-              });
-            });
-          });
-        });
-      });
-    });
-
-    if (cheapestRoundTrip) {
-      const msg = `\u2708\ufe0f *Vuelo barato encontrado!*
-Origen: *${ORIGIN}*  \u2192  Destino: *${DESTINATION}*
-Fecha ida: ${cheapestRoundTrip.ida}
-Fecha vuelta: ${cheapestRoundTrip.vuelta}
-Clases: Ida *${cheapestRoundTrip.groupOut}* / Vuelta *${cheapestRoundTrip.groupIn}*
-Pasajeros: ${cheapestRoundTrip.count}
-Total aprox: USD ${cheapestRoundTrip.total.toFixed(2)}
-Precio final por adulto: *USD ${cheapestRoundTrip.pricePerPassenger.toFixed(2)}*`;
-      await sendTelegram(msg);
+              }
+            }
+          }
+        }
+      }
     }
-
+    return best;
   } catch (err) {
-    console.error(`Error ${ida} -> ${vuelta} (${adults}):`, err.message);
+    console.error(`[err] ${outDate}→${retDate} (${adults}pax): ${err.message}`);
+    return null;
   }
 }
 
-async function main() {
-  for (const m of MONTHS) {
-    const [year, month] = m.split("-");
-    const calendarPrices = await getCalendarPrices(month, year);
-    const combos = combinePromisingDates(calendarPrices);
+// Run up to `concurrency` promises at a time.
+async function pooled(tasks, concurrency) {
+  const results = [];
+  for (let i = 0; i < tasks.length; i += concurrency) {
+    const batch = tasks.slice(i, i + concurrency).map(t => t());
+    results.push(...await Promise.all(batch));
+  }
+  return results;
+}
 
-    for (const { ida, vuelta } of combos) {
-      for (const adults of PASSENGER_COUNTS) {
-        await checkFlight(ida, vuelta, adults);
-      }
+async function sendAlert(deal) {
+  const key = `${deal.outDate}|${deal.retDate}|${deal.adults}`;
+  const lastAlert = alertedDeals.get(key) || 0;
+  if (Date.now() - lastAlert < DEAL_RENOTIFY_MS) return;
+  alertedDeals.set(key, Date.now());
+
+  const bookingUrl = `https://www.flylevel.com/Flight/Select?o1=${ORIGIN}&d1=${DESTINATION}&dd1=${deal.outDate}&dd2=${deal.retDate}&ADT=${deal.adults}&CHD=0&Inl=0&r=TRUE&mm=FALSE&forcedCurrency=${CURRENCY}&forcedCulture=es-ES`;
+  const msg = `✈️ *¡VUELO BARATO EZE→BCN!*
+Ida: *${deal.outDate}*   Vuelta: *${deal.retDate}*  (${deal.stayDays} días)
+Tarifa: ${deal.groupOut} / ${deal.groupIn}
+Pasajeros: ${deal.adults}
+Total: ${CURRENCY} ${deal.total.toFixed(0)}
+*Por persona: ${CURRENCY} ${deal.pricePerPax.toFixed(0)}*
+
+[👉 Reservar ahora](${bookingUrl})`;
+
+  console.log(`[ALERTA] ${deal.outDate}→${deal.retDate} | ${deal.adults}pax | ${CURRENCY} ${deal.pricePerPax.toFixed(0)}/pax`);
+  await sendTelegram(msg);
+}
+
+// When a cheap outbound date is found, check all return offsets + both adult counts.
+async function expandAndAlert(outDate) {
+  const tasks = [];
+  for (const offset of EXPAND_RETURN_OFFSETS) {
+    if (offset < MIN_STAY_DAYS) continue;
+    for (const adults of PASSENGER_COUNTS) {
+      const retDate = addDays(outDate, offset);
+      tasks.push(() => checkPair(outDate, retDate, adults));
     }
+  }
+  const deals = await pooled(tasks, CONCURRENCY);
+  for (const deal of deals) {
+    if (deal) await sendAlert(deal);
+  }
+}
+
+let scanning = false; // prevent overlapping runs
+
+async function main() {
+  if (scanning) {
+    console.log(`[${new Date().toLocaleTimeString()}] Ciclo anterior aún en curso, saltando.`);
+    return;
+  }
+  scanning = true;
+  const start = Date.now();
+  console.log(`[${new Date().toLocaleTimeString()}] Escaneando ${MONTHS.length} meses...`);
+
+  try {
+    const triggeredDates = new Set();
+
+    for (const month of MONTHS) {
+      const departures = departureDatesForMonth(month);
+      // Fast pass: 1 adult, fixed 14-day return, batched concurrently
+      const tasks = departures.map(outDate => async () => {
+        const retDate = addDays(outDate, SCAN_RETURN_OFFSET);
+        const deal = await checkPair(outDate, retDate, 1);
+        if (deal) triggeredDates.add(outDate);
+      });
+      await pooled(tasks, CONCURRENCY);
+    }
+
+    // Expand on any triggered departure dates
+    for (const outDate of triggeredDates) {
+      await expandAndAlert(outDate);
+    }
+  } finally {
+    scanning = false;
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    console.log(`[${new Date().toLocaleTimeString()}] Listo en ${elapsed}s\n`);
   }
 }
 
 main();
+setInterval(main, LOOP_INTERVAL_MS);
